@@ -263,7 +263,7 @@ footer.note{font-size:11.5px;color:var(--ink-soft);text-align:center;margin-top:
    ========================================================================= */
 
 const MODEL_DEFAULT = "claude-sonnet-4-6";
-const APP_VERSION = "1.1";
+const APP_VERSION = "1.2";
 
 const STORAGE_KEYS = {
   apiKey:"saenggibu_api_key",
@@ -792,13 +792,13 @@ function renderAreaWeightSetup(areaCfg, st){
   });
   card.appendChild(presets);
   app.appendChild(card);
-  updateSum();
 
   const nextBtn = el('button',{class:'btn-primary', onclick:()=>{
     st.weights = {academic:inputs.academic.value_num, career:inputs.career.value_num, community:inputs.community.value_num};
     persistState();
     renderArea();
   }}, '이 비중으로 질문 시작하기');
+  updateSum();
   app.appendChild(el('div',{class:'start-bar'}, nextBtn, el('button',{class:'btn-ghost', onclick:renderLanding},'진행 지도로 돌아가기')));
   app.appendChild(renderFooter());
 }

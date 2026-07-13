@@ -219,6 +219,29 @@ footer.note{font-size:11.5px;color:var(--ink-soft);text-align:center;margin-top:
 .preset-chip:hover{border-color:var(--indigo);color:var(--indigo);}
 .weight-ratio-preview{font-family:'Noto Serif KR',serif;font-size:14px;color:var(--indigo);margin-top:10px;}
 
+/* ---------- Settings modal ---------- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(29,36,48,.45);z-index:200;
+  display:none;align-items:center;justify-content:center;padding:20px;
+}
+.modal-overlay.open{display:flex;}
+.modal-panel{
+  background:var(--card);border-radius:var(--radius);max-width:440px;width:100%;
+  padding:24px 24px 20px;box-shadow:0 20px 50px rgba(0,0,0,.25);
+}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+.modal-head h3{font-family:'Noto Serif KR',serif;font-size:17px;margin:0;}
+.modal-close{border:none;background:transparent;font-size:16px;color:var(--ink-soft);padding:2px 6px;}
+.modal-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;}
+.key-row{display:flex;gap:6px;}
+.key-row input{flex:1;}
+.eye-btn{flex:none;border:1px solid var(--line);background:#fff;border-radius:8px;padding:0 12px;font-size:12px;color:var(--ink-soft);}
+.status-line{font-size:12.5px;padding:8px 10px;border-radius:8px;margin-top:8px;}
+.status-set{background:var(--sea-soft);color:var(--sea);}
+.status-unset{background:var(--danger-soft);color:var(--danger);}
+.danger-btn{border:1px solid var(--danger);background:#fff;color:var(--danger);border-radius:10px;padding:12px 18px;font-size:13.5px;}
+.danger-btn:hover{background:var(--danger-soft);}
+
 @media(max-width:600px){
   .qcard{padding:20px 18px 18px;}
   .track-row{padding:15px 14px;flex-wrap:wrap;}
@@ -239,8 +262,73 @@ footer.note{font-size:11.5px;color:var(--ink-soft);text-align:center;margin-top:
      방향을 실시간으로 조정한다 (Claude API 활용).
    ========================================================================= */
 
-const MODEL = "claude-sonnet-4-6";
-const APP_VERSION = "1.0";
+const MODEL_DEFAULT = "claude-sonnet-4-6";
+const APP_VERSION = "1.1";
+
+const STORAGE_KEYS = {
+  apiKey:"saenggibu_api_key",
+  model:"saenggibu_model",
+  progress:"saenggibu_progress_v1"
+};
+
+/* 현재 사용 중인 API 키·모델 (브라우저에만 저장, 삭제 전까지 유지) */
+let API_SETTINGS = { key:"", model: MODEL_DEFAULT };
+
+function loadApiSettings(){
+  try{
+    API_SETTINGS.key = localStorage.getItem(STORAGE_KEYS.apiKey) || "";
+    API_SETTINGS.model = localStorage.getItem(STORAGE_KEYS.model) || MODEL_DEFAULT;
+  }catch(e){ console.warn("API 설정을 불러오지 못했습니다.", e); }
+}
+function saveApiSettings(key, model){
+  API_SETTINGS.key = key || "";
+  API_SETTINGS.model = model || MODEL_DEFAULT;
+  try{
+    localStorage.setItem(STORAGE_KEYS.apiKey, API_SETTINGS.key);
+    localStorage.setItem(STORAGE_KEYS.model, API_SETTINGS.model);
+  }catch(e){ console.warn("API 설정을 저장하지 못했습니다.", e); }
+}
+function deleteApiKey(){
+  API_SETTINGS.key = "";
+  try{ localStorage.removeItem(STORAGE_KEYS.apiKey); }catch(e){}
+}
+
+/* ---------- 진행상황 자동 저장/복원 (브라우저 저장소, 초기화 전까지 유지) ---------- */
+function persistState(){
+  try{
+    const plain = {version:APP_VERSION, student:state.student, areas:{}};
+    AREAS.forEach(a=>{
+      const st = state.areas[a.key];
+      plain.areas[a.key] = {history:st.history, covered:[...st.covered], done:st.done, draft:st.draft, compliance:st.compliance, level:st.level, weights:st.weights};
+    });
+    localStorage.setItem(STORAGE_KEYS.progress, JSON.stringify(plain));
+  }catch(e){ console.warn("진행상황 자동 저장 실패", e); }
+}
+function loadPersistedState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEYS.progress);
+    if(!raw) return;
+    const data = JSON.parse(raw);
+    if(data.student) state.student = data.student;
+    AREAS.forEach(a=>{
+      const d = data.areas && data.areas[a.key];
+      if(d) state.areas[a.key] = {history:d.history||[], covered:new Set(d.covered||[]), done:!!d.done, draft:d.draft||"", compliance:d.compliance||null, level:d.level||1, weights:d.weights||null};
+    });
+  }catch(e){ console.warn("진행상황 복원 실패", e); }
+}
+function freshAreasState(){
+  const obj = {};
+  AREAS.forEach(a=>{ obj[a.key] = {history:[], covered:new Set(), done:false, draft:"", compliance:null, level:1, weights:null}; });
+  return obj;
+}
+function resetAll(){
+  if(!confirm("정말 초기화할까요?\n학생정보와 지금까지의 모든 답변·초안이 삭제됩니다. (API 키 설정은 유지됩니다)")) return;
+  state.student = {id:"", name:"", career:""};
+  state.currentAreaIndex = null;
+  state.areas = freshAreasState();
+  try{ localStorage.removeItem(STORAGE_KEYS.progress); }catch(e){}
+  renderLanding();
+}
 
 /* 각 영역에서 선택 가능한 역량 축 (학생부종합전형 3축 평가 기준) */
 const COMPETENCIES = {
@@ -378,17 +466,31 @@ function safeParseJSON(text){
   try{ return JSON.parse(t); }catch(e){ console.error("JSON parse fail", e, text); return null; }
 }
 
+class MissingApiKeyError extends Error{}
+
 async function callClaude(system, messages, maxTokens=1000){
+  if(!API_SETTINGS.key){
+    throw new MissingApiKeyError("API 키가 설정되지 않았습니다.");
+  }
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
-    headers:{"Content-Type":"application/json"},
+    headers:{
+      "Content-Type":"application/json",
+      "x-api-key": API_SETTINGS.key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
     body: JSON.stringify({
-      model: MODEL,
+      model: API_SETTINGS.model || MODEL_DEFAULT,
       max_tokens: maxTokens,
       system: system,
       messages: messages
     })
   });
+  if(!resp.ok){
+    const errBody = await resp.text();
+    throw new Error(`API 오류 (${resp.status}): ${errBody.slice(0,200)}`);
+  }
   const data = await resp.json();
   const textBlock = (data.content||[]).find(b=>b.type==='text');
   return textBlock ? textBlock.text : "";
@@ -438,6 +540,7 @@ function renderStudentInfo(){
       state.student.name = nameInput.value.trim();
       state.student.career = careerInput.value.trim();
       if(!state.student.name){ nameInput.focus(); return; }
+      persistState();
       renderLanding();
     }}, '입력 완료하고 시작하기')
   ));
@@ -493,7 +596,7 @@ function renderLanding(){
   app.appendChild(bar);
 
   app.appendChild(el('p',{class:'hint-note'},
-    '※ 답변은 브라우저 메모리에만 저장됩니다. 중간에 닫아야 한다면 "진행상황 불러오기" 옆의 저장 기능을 이용해 JSON으로 내려받아 두세요. 모든 질문·초안은 학교생활기록부 기재요령(F01~F14 금지사항, 4단 서사구조 등)을 기준으로 자동 점검됩니다.'
+    '※ 답변과 API 설정은 이 브라우저에 자동으로 저장되며, 상단의 "초기화" 버튼을 누르기 전까지 계속 유지됩니다. 다른 기기로 옮기려면 "저장" 버튼으로 JSON 파일을 내려받아 "진행상황 불러오기"로 이어서 쓸 수 있습니다. 모든 질문·초안은 학교생활기록부 기재요령(F01~F14 금지사항, 4단 서사구조 등)을 기준으로 자동 점검됩니다.'
   ));
 
   app.appendChild(renderFooter());
@@ -509,8 +612,10 @@ function renderTopbar(){
       )
     ),
     el('div',{class:'topbar-actions'},
+      el('button',{class:'chip-btn', onclick:openSettingsModal},'⚙ API 설정'),
       el('button',{class:'chip-btn', onclick:saveProgress},'저장'),
-      el('button',{class:'chip-btn', onclick:renderLanding},'처음으로')
+      el('button',{class:'chip-btn', onclick:renderLanding},'처음으로'),
+      el('button',{class:'chip-btn', onclick:resetAll, style:'color:var(--danger);border-color:var(--danger-soft);'},'초기화')
     )
   );
 }
@@ -519,6 +624,73 @@ function renderFooter(){
   return el('footer',{class:'note'},
     '이 도구가 만든 문장은 초안입니다. 담임·교과 선생님의 관찰 및 최종 검토를 거쳐 학교생활기록부에 반영해 주세요.'
   );
+}
+
+/* ---------- API 설정 모달 (기본 숨김, 토글로 열림) ---------- */
+let settingsModalEl = null;
+
+function buildSettingsModal(){
+  const overlay = el('div',{class:'modal-overlay', id:'settings-modal'});
+  const panel = el('div',{class:'modal-panel'});
+
+  const keyInput = el('input',{type:'password', placeholder:'sk-ant-...', value:API_SETTINGS.key});
+  const eyeBtn = el('button',{class:'eye-btn', onclick:(e)=>{
+    e.preventDefault();
+    if(keyInput.type==='password'){ keyInput.type='text'; eyeBtn.textContent='숨기기'; }
+    else{ keyInput.type='password'; eyeBtn.textContent='보기'; }
+  }}, '보기');
+  const modelInput = el('input',{type:'text', placeholder:MODEL_DEFAULT, value:API_SETTINGS.model});
+  const statusLine = el('div',{class:'status-line ' + (API_SETTINGS.key?'status-set':'status-unset')},
+    API_SETTINGS.key ? '저장된 키를 사용 중입니다.' : '아직 키가 설정되지 않았습니다. 질문 생성이 동작하지 않습니다.');
+
+  function refreshStatus(){
+    statusLine.className = 'status-line ' + (API_SETTINGS.key?'status-set':'status-unset');
+    statusLine.textContent = API_SETTINGS.key ? '저장된 키를 사용 중입니다.' : '아직 키가 설정되지 않았습니다. 질문 생성이 동작하지 않습니다.';
+  }
+
+  panel.appendChild(el('div',{class:'modal-head'},
+    el('h3',{},'API 설정'),
+    el('button',{class:'modal-close', onclick:closeSettingsModal},'✕')
+  ));
+  panel.appendChild(el('div',{class:'form-row'},
+    el('label',{},'Anthropic API 키'),
+    el('div',{class:'key-row'}, keyInput, eyeBtn),
+    el('div',{class:'form-hint'},'이 브라우저에만 저장되며, Anthropic API 호출 외 다른 용도로 쓰이지 않습니다. 삭제 버튼을 누르기 전까지 계속 저장되어 자동으로 사용됩니다.')
+  ));
+  panel.appendChild(el('div',{class:'form-row'},
+    el('label',{},'AI 모델명'),
+    modelInput,
+    el('div',{class:'form-hint'},`기본값: ${MODEL_DEFAULT}. 다른 Claude 모델로 바꾸려면 정확한 모델명을 입력하세요.`)
+  ));
+  panel.appendChild(statusLine);
+  panel.appendChild(el('div',{class:'modal-actions'},
+    el('button',{class:'btn-primary', onclick:()=>{
+      saveApiSettings(keyInput.value.trim(), modelInput.value.trim());
+      refreshStatus();
+      closeSettingsModal();
+    }}, '저장'),
+    el('button',{class:'danger-btn', onclick:()=>{
+      if(!confirm('저장된 API 키를 삭제할까요?')) return;
+      deleteApiKey();
+      keyInput.value = "";
+      refreshStatus();
+    }}, '키 삭제'),
+    el('button',{class:'btn-ghost', onclick:closeSettingsModal},'닫기')
+  ));
+
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeSettingsModal(); });
+  return overlay;
+}
+
+function openSettingsModal(){
+  if(settingsModalEl) settingsModalEl.remove();
+  settingsModalEl = buildSettingsModal();
+  document.body.appendChild(settingsModalEl);
+  requestAnimationFrame(()=>settingsModalEl.classList.add('open'));
+}
+function closeSettingsModal(){
+  if(settingsModalEl){ settingsModalEl.classList.remove('open'); }
 }
 
 /* ---------- 저장/불러오기 (localStorage 미사용 — JSON 파일) ---------- */
@@ -551,6 +723,7 @@ function loadProgress(){
           const d = data.areas[a.key];
           if(d) state.areas[a.key] = {history:d.history||[], covered:new Set(d.covered||[]), done:!!d.done, draft:d.draft||"", compliance:d.compliance||null, level:d.level||1, weights:d.weights||null};
         });
+        persistState();
         renderLanding();
       }catch(err){ alert('파일을 읽을 수 없습니다. 올바른 저장 파일인지 확인해 주세요.'); }
     };
@@ -628,6 +801,7 @@ function renderAreaWeightSetup(areaCfg, st){
 
   const nextBtn = el('button',{class:'btn-primary', onclick:()=>{
     st.weights = {academic:inputs.academic.value_num, career:inputs.career.value_num, community:inputs.community.value_num};
+    persistState();
     renderArea();
   }}, '이 비중으로 질문 시작하기');
   app.appendChild(el('div',{class:'start-bar'}, nextBtn, el('button',{class:'btn-ghost', onclick:renderLanding},'진행 지도로 돌아가기')));
@@ -758,6 +932,7 @@ function renderQuestionCard(qcard, areaCfg, st, q){
     if(!answer){ textarea.focus(); return; }
     st.history.push({q:q.question, a:answer, level:lvl});
     st._pendingQuestion = null;
+    persistState();
     nextBtn.disabled = true; nextBtn.textContent = '생각 정리 중...';
     await proceedAfterAnswer(areaCfg, st);
   }}, '다음 질문');
@@ -781,6 +956,7 @@ async function proceedAfterAnswer(areaCfg, st){
 }
 
 async function fetchNextQuestion(areaCfg, st, qcard){
+  if(!API_SETTINGS.key){ renderApiKeyMissing(qcard, ()=>fetchNextQuestion(areaCfg, st, qcard)); return; }
   const system = buildQuestionSystemPrompt(areaCfg, st);
   const historyText = st.history.map((h,i)=>`Q${i+1}: ${h.q}\nA${i+1}: ${h.a}`).join('\n\n');
   const userMsg = `지금까지의 대화:\n${historyText || '(아직 없음, 진입 질문에 대한 답변임)'}\n\n위 대화를 참고하여 다음 질문 JSON을 생성하라.`;
@@ -810,15 +986,24 @@ async function fetchNextQuestion(areaCfg, st, qcard){
     st._pendingQuestion = q;
     qcard.innerHTML = "";
     renderQuestionCard(qcard, areaCfg, st, q);
+    persistState();
   }catch(err){
     console.error(err);
+    if(err instanceof MissingApiKeyError){ renderApiKeyMissing(qcard, ()=>fetchNextQuestion(areaCfg, st, qcard)); return; }
     renderQuestionFallback(qcard, areaCfg, st);
   }
 }
 
+function renderApiKeyMissing(qcard, retry){
+  qcard.innerHTML = "";
+  qcard.appendChild(el('div',{class:'warn-note'}, 'API 키가 설정되지 않아 질문을 생성할 수 없습니다. 상단의 "⚙ API 설정"에서 Anthropic API 키를 입력해 주세요.'));
+  qcard.appendChild(el('button',{class:'btn-primary', onclick:openSettingsModal}, 'API 설정 열기'));
+  qcard.appendChild(el('button',{class:'btn-ghost', onclick:retry}, '설정 후 다시 시도'));
+}
+
 function renderQuestionFallback(qcard, areaCfg, st){
   qcard.innerHTML = "";
-  qcard.appendChild(el('div',{class:'warn-note'}, 'AI 응답을 받아오는 데 문제가 발생했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.'));
+  qcard.appendChild(el('div',{class:'warn-note'}, 'AI 응답을 받아오는 데 문제가 발생했습니다. 네트워크 상태나 API 설정을 확인한 뒤 다시 시도해 주세요.'));
   qcard.appendChild(el('button',{class:'btn-primary', onclick:()=>fetchNextQuestion(areaCfg, st, qcard)}, '다시 시도'));
   qcard.appendChild(el('button',{class:'btn-ghost', onclick:()=>finishArea(areaCfg, st)}, '지금까지 답변으로 초안 만들기'));
 }
@@ -863,6 +1048,10 @@ ${FORBIDDEN}
 
 async function finishArea(areaCfg, st, encourage){
   const qcard = document.getElementById('qcard');
+  if(!API_SETTINGS.key){
+    if(qcard) renderApiKeyMissing(qcard, ()=>finishArea(areaCfg, st, encourage));
+    return;
+  }
   if(qcard){
     qcard.innerHTML = "";
     qcard.appendChild(el('div',{class:'loading-line'}, el('div',{class:'spinner'}), '답변을 종합해 자기평가서 초안을 작성하고 있습니다...'));
@@ -888,6 +1077,7 @@ async function finishArea(areaCfg, st, encourage){
     st.compliance = {ok:false, note:"오류로 인해 점검되지 않았습니다."};
   }
   st.done = true;
+  persistState();
   renderAreaResult();
 }
 
@@ -1054,6 +1244,8 @@ function downloadAllText(){
 }
 
 /* ---------- 시작 ---------- */
+loadApiSettings();
+loadPersistedState();
 renderLanding();
 </script>
 </body>

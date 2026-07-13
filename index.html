@@ -263,7 +263,7 @@ footer.note{font-size:11.5px;color:var(--ink-soft);text-align:center;margin-top:
    ========================================================================= */
 
 const MODEL_DEFAULT = "claude-sonnet-4-6";
-const APP_VERSION = "1.2";
+const APP_VERSION = "1.3";
 
 const STORAGE_KEYS = {
   apiKey:"saenggibu_api_key",
@@ -323,6 +323,7 @@ function freshAreasState(){
 }
 function resetAll(){
   if(!confirm("정말 초기화할까요?\n학생정보와 지금까지의 모든 답변·초안이 삭제됩니다. (API 키 설정은 유지됩니다)")) return;
+  if(!confirm("한 번 더 확인할게요.\n삭제된 답변과 초안은 되돌릴 수 없습니다. 정말로 초기화하시겠습니까?")) return;
   state.student = {id:"", name:"", career:""};
   state.currentAreaIndex = null;
   state.areas = freshAreasState();
@@ -650,7 +651,7 @@ function buildSettingsModal(){
   panel.appendChild(el('div',{class:'form-row'},
     el('label',{},'Anthropic API 키'),
     el('div',{class:'key-row'}, keyInput),
-    el('div',{class:'form-hint'},'이 브라우저에만 저장되며, Anthropic API 호출 외 다른 용도로 쓰이지 않습니다. 삭제 버튼을 누르기 전까지 계속 저장되어 자동으로 사용됩니다.')
+    el('div',{class:'form-hint'},'이 브라우저에만 저장되며, Anthropic API 호출 외 다른 용도로 쓰이지 않습니다. 삭제 버튼을 누르기 전까지 계속 저장되어 자동으로 사용되며, 삭제하면 새 키를 다시 입력하기 전까지 질문 생성·초안 작성이 동작하지 않습니다.')
   ));
   panel.appendChild(el('div',{class:'form-row'},
     el('label',{},'AI 모델명'),
@@ -665,7 +666,7 @@ function buildSettingsModal(){
       closeSettingsModal();
     }}, '저장'),
     el('button',{class:'danger-btn', onclick:()=>{
-      if(!confirm('저장된 API 키를 삭제할까요?')) return;
+      if(!confirm('저장된 API 키를 삭제할까요?\n삭제하면 새 키를 다시 입력하기 전까지 질문 생성·초안 작성이 동작하지 않습니다.')) return;
       deleteApiKey();
       keyInput.value = "";
       refreshStatus();

@@ -634,11 +634,6 @@ function buildSettingsModal(){
   const panel = el('div',{class:'modal-panel'});
 
   const keyInput = el('input',{type:'password', placeholder:'sk-ant-...', value:API_SETTINGS.key});
-  const eyeBtn = el('button',{class:'eye-btn', onclick:(e)=>{
-    e.preventDefault();
-    if(keyInput.type==='password'){ keyInput.type='text'; eyeBtn.textContent='숨기기'; }
-    else{ keyInput.type='password'; eyeBtn.textContent='보기'; }
-  }}, '보기');
   const modelInput = el('input',{type:'text', placeholder:MODEL_DEFAULT, value:API_SETTINGS.model});
   const statusLine = el('div',{class:'status-line ' + (API_SETTINGS.key?'status-set':'status-unset')},
     API_SETTINGS.key ? '저장된 키를 사용 중입니다.' : '아직 키가 설정되지 않았습니다. 질문 생성이 동작하지 않습니다.');
@@ -654,7 +649,7 @@ function buildSettingsModal(){
   ));
   panel.appendChild(el('div',{class:'form-row'},
     el('label',{},'Anthropic API 키'),
-    el('div',{class:'key-row'}, keyInput, eyeBtn),
+    el('div',{class:'key-row'}, keyInput),
     el('div',{class:'form-hint'},'이 브라우저에만 저장되며, Anthropic API 호출 외 다른 용도로 쓰이지 않습니다. 삭제 버튼을 누르기 전까지 계속 저장되어 자동으로 사용됩니다.')
   ));
   panel.appendChild(el('div',{class:'form-row'},
